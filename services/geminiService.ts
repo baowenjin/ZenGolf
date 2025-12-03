@@ -1,15 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
 import { ShotResult, TerrainType } from '../types';
 
-let ai: GoogleGenAI | null = null;
-
-if (process.env.API_KEY) {
-    ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-}
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const getCaddieCommentary = async (result: ShotResult): Promise<string> => {
-  if (!ai) return "Nice shot! (AI Key missing)";
-
   const prompt = `
     You are a witty, slightly sarcastic, but ultimately helpful golf caddie.
     The player just hit a shot with the following stats:
