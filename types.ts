@@ -52,6 +52,15 @@ export interface JoyConData {
     b: boolean;
     x: boolean;
     y: boolean;
+    plus: boolean;
+    minus: boolean;
+    home: boolean;
+    capture: boolean;
+    up: boolean;
+    down: boolean;
+    left: boolean;
+    right: boolean;
+    stick: boolean; // Stick click
   };
 }
 

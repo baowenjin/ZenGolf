@@ -10,6 +10,7 @@ interface HIDDevice extends EventTarget {
   addEventListener(type: string, listener: (event: any) => void): void;
   productId: number;
   vendorId: number;
+  productName: string;
 }
 
 // Extend Navigator to include HID
@@ -27,7 +28,7 @@ const PRODUCT_IDS = [0x2006, 0x2007];
 export class JoyConService {
   private device: HIDDevice | null = null;
   private onDataCallback: ((data: JoyConData) => void) | null = null;
-  private isConnected = false;
+  public isConnected = false;
 
   constructor() {}
 
@@ -49,6 +50,8 @@ export class JoyConService {
       await this.device.open();
       this.isConnected = true;
 
+      console.log(`Connected to ${this.device.productName}`);
+
       await this.initializeDevice();
       this.startListening();
 
@@ -59,16 +62,25 @@ export class JoyConService {
     }
   }
 
+  public getDeviceName(): string {
+    return this.device?.productName || "No Device";
+  }
+
   private async initializeDevice() {
     if (!this.device) return;
 
     try {
-      // Enable vibration (needed to wake up some modes)
+      // 1. Enable Vibration
       await this.sendSubcommand(0x48, [0x01]);
-      // Enable IMU (6-Axis Sensor)
+      
+      // 2. Enable IMU (6-Axis Sensor)
       await this.sendSubcommand(0x40, [0x01]);
-      // Set input report mode to Standard Full (0x30) - 60Hz IMU updates
+      
+      // 3. Set input report mode to Standard Full (0x30)
+      // This is crucial for 60Hz IMU updates
       await this.sendSubcommand(0x03, [0x30]);
+      
+      console.log("Joy-Con initialized in Standard Full Mode");
     } catch (e) {
       console.warn("Failed to initialize Joy-Con modes:", e);
     }
@@ -103,14 +115,21 @@ export class JoyConService {
 
   private parseInputReport(data: DataView) {
     // Basic parsing for Standard Full Mode (0x30)
-    // Byte 0: Report ID
-    // Byte 1-12: Button status etc.
-    // Byte 13-48: IMU Data (3 frames of 12 bytes each: AccelX, Y, Z, GyroX, Y, Z)
+    // Offset 0: Report ID
+    // Offset 1: Timer
+    // Offset 2: Battery
+    // Offset 3: Buttons (Right)
+    // Offset 4: Buttons (Shared)
+    // Offset 5: Buttons (Left)
+    // Offset 6-8: Left Stick
+    // Offset 9-11: Right Stick
+    // Offset 13-48: IMU Data
 
     const reportId = data.getUint8(0);
     if (reportId !== 0x30) return;
 
-    const accelX = data.getInt16(13, true) * 0.000244; // Scale factors approx
+    // IMU Data
+    const accelX = data.getInt16(13, true) * 0.000244;
     const accelY = data.getInt16(15, true) * 0.000244;
     const accelZ = data.getInt16(17, true) * 0.000244;
 
@@ -119,50 +138,62 @@ export class JoyConService {
     const gyroZ = data.getInt16(23, true) * 0.061;
 
     // Buttons
-    const byte1 = data.getUint8(1);
-    const byte2 = data.getUint8(2);
-    const byte3 = data.getUint8(3);
+    // NOTE: DataView offsets are absolute.
+    const bRight = data.getUint8(3);
+    const bShared = data.getUint8(4);
+    const bLeft = data.getUint8(5);
 
     const buttons = {
-      y: !!(byte1 & 0x01),
-      x: !!(byte1 & 0x02),
-      b: !!(byte1 & 0x04),
-      a: !!(byte1 & 0x08),
-      r: !!(byte3 & 0x40),
-      zr: !!(byte3 & 0x80),
-      l: !!(byte3 & 0x40), 
-      zl: !!(byte3 & 0x80),
+      // Right Joy-Con (Byte 3)
+      y: !!(bRight & 0x01),
+      x: !!(bRight & 0x02),
+      b: !!(bRight & 0x04),
+      a: !!(bRight & 0x08),
+      r: !!(bRight & 0x40),
+      zr: !!(bRight & 0x80),
+
+      // Shared (Byte 4)
+      minus: !!(bShared & 0x01),
+      plus: !!(bShared & 0x02),
+      rStickClick: !!(bShared & 0x04),
+      lStickClick: !!(bShared & 0x08),
+      home: !!(bShared & 0x10),
+      capture: !!(bShared & 0x20),
+      stick: !!(bShared & 0x04) || !!(bShared & 0x08), // Generic stick click
+
+      // Left Joy-Con (Byte 5)
+      down: !!(bLeft & 0x01),
+      up: !!(bLeft & 0x02),
+      right: !!(bLeft & 0x04),
+      left: !!(bLeft & 0x08),
+      l: !!(bLeft & 0x40), 
+      zl: !!(bLeft & 0x80),
     };
 
     // Analog Sticks (12-bit parsing)
-    // Left Stick: Bytes 6, 7, 8
-    // Right Stick: Bytes 9, 10, 11
     let stickX = 0;
     let stickY = 0;
 
     const productId = this.device?.productId;
 
-    if (productId === 0x2006) {
-      // Joy-Con (L)
-      const b0 = data.getUint8(6);
-      const b1 = data.getUint8(7);
-      const b2 = data.getUint8(8);
-      
-      const rawX = b0 | ((b1 & 0xF) << 8);
-      const rawY = ((b1 & 0xF0) >> 4) | (b2 << 4);
-      
-      // Normalize approx 0-4095 to -1.0 to 1.0
-      stickX = (rawX - 2048) / 2048;
-      stickY = (rawY - 2048) / 2048;
-    } else if (productId === 0x2007) {
-      // Joy-Con (R)
-      const b0 = data.getUint8(9);
-      const b1 = data.getUint8(10);
-      const b2 = data.getUint8(11);
-      
-      const rawX = b0 | ((b1 & 0xF) << 8);
-      const rawY = ((b1 & 0xF0) >> 4) | (b2 << 4);
+    // Joy-Con L (0x2006) uses bytes 6-8
+    // Joy-Con R (0x2007) uses bytes 9-11
+    let b0 = 0, b1 = 0, b2 = 0;
 
+    if (productId === 0x2006) {
+      b0 = data.getUint8(6);
+      b1 = data.getUint8(7);
+      b2 = data.getUint8(8);
+    } else if (productId === 0x2007) {
+      b0 = data.getUint8(9);
+      b1 = data.getUint8(10);
+      b2 = data.getUint8(11);
+    }
+
+    if (b0 || b1 || b2) {
+      const rawX = b0 | ((b1 & 0xF) << 8);
+      const rawY = ((b1 & 0xF0) >> 4) | (b2 << 4);
+      // Normalize approx 0-4095 to -1.0 to 1.0
       stickX = (rawX - 2048) / 2048;
       stickY = (rawY - 2048) / 2048;
     }

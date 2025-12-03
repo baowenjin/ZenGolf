@@ -10,7 +10,6 @@ interface LogEntry {
   id: number;
   time: string;
   message: string;
-  type: 'button' | 'sensor';
 }
 
 const App: React.FC = () => {
@@ -32,6 +31,7 @@ const App: React.FC = () => {
   const [debugData, setDebugData] = useState<JoyConData | null>(null);
   const [logMode, setLogMode] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [deviceName, setDeviceName] = useState("No Device");
   
   // --- Refs ---
   const ballVel = useRef<Vector3>({ x: 0, y: 0, z: 0 });
@@ -43,12 +43,12 @@ const App: React.FC = () => {
   const logIdCounter = useRef(0);
 
   // --- Logic ---
-  const addLog = (message: string, type: 'button' | 'sensor' = 'button') => {
+  const addLog = (message: string) => {
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
     
     setLogs(prev => {
-       const newLog = { id: logIdCounter.current++, time: timeStr, message, type };
+       const newLog = { id: logIdCounter.current++, time: timeStr, message };
        return [newLog, ...prev].slice(0, 100); // Keep last 100 logs
     });
   };
@@ -111,30 +111,16 @@ const App: React.FC = () => {
       const prev = prevButtonsRef.current;
       const curr = data.buttons;
       
-      const checkBtn = (key: keyof JoyConData['buttons'], name: string) => {
-        if (curr[key] && !prev[key]) addLog(`${name} Pressed`);
-        if (!curr[key] && prev[key]) addLog(`${name} Released`);
-      };
-
-      checkBtn('a', 'Button A');
-      checkBtn('b', 'Button B');
-      checkBtn('x', 'Button X');
-      checkBtn('y', 'Button Y');
-      checkBtn('l', 'L');
-      checkBtn('r', 'R');
-      checkBtn('zl', 'ZL');
-      checkBtn('zr', 'ZR');
+      const btnKeys = Object.keys(curr) as Array<keyof typeof curr>;
+      btnKeys.forEach(key => {
+        if (curr[key] && !prev[key]) addLog(`${key.toUpperCase()} Pressed`);
+        if (!curr[key] && prev[key]) addLog(`${key.toUpperCase()} Released`);
+      });
     }
     prevButtonsRef.current = data.buttons;
 
-    // Log large movements (stick)
-    if (Math.abs(data.stick.x) > 0.9 || Math.abs(data.stick.y) > 0.9) {
-      // Throttle stick logs? For now let's just show values in the panel
-    }
-    // ---------------------
-
-    // 1. Global Reset (Check this FIRST to avoid TS unreachable code errors and allow resetting from Result)
-    const holdingReset = data.buttons.b || data.buttons.y;
+    // 1. Global Reset (Check this FIRST to avoid TS unreachable code errors)
+    const holdingReset = data.buttons.b || data.buttons.y || data.buttons.minus;
     if (holdingReset && gameState === GameState.RESULT) {
        resetGame();
        return;
@@ -195,21 +181,18 @@ const App: React.FC = () => {
   };
 
   // --- Subscription Management ---
-  // Ensure the subscription uses the latest state closure
   useEffect(() => {
-    if (inputMode === 'JOYCON') {
-      joyConService.subscribe(processJoyConData);
-    }
-    // No cleanup needed for subscription replacement as it just overwrites callback
-  }, [inputMode, gameState, isAddressMode, currentClubIndex, resetGame, executeShot, finishSwing]);
+    joyConService.subscribe(processJoyConData);
+  }, [gameState, isAddressMode, currentClubIndex, resetGame, executeShot, finishSwing]);
 
 
   const handleJoyConConnect = async () => {
     const success = await joyConService.connect();
     if (success) {
       setInputMode('JOYCON');
-      setGameState(GameState.IDLE);
-      // Subscription is handled by the useEffect above
+      setDeviceName(joyConService.getDeviceName());
+      setGameState(prev => prev === GameState.INTRO ? GameState.IDLE : prev);
+      addLog("Device Connected: " + joyConService.getDeviceName());
     } else {
       alert("Could not connect to Joy-Con. Ensure it is paired via Bluetooth.");
     }
@@ -301,57 +284,125 @@ const App: React.FC = () => {
       {/* Log Mode Toggle */}
       <button 
         onClick={() => setLogMode(!logMode)}
-        className="fixed top-4 right-4 z-[100] px-3 py-1 bg-gray-800/80 text-white text-xs rounded hover:bg-gray-700 transition-colors border border-gray-600"
+        className="fixed top-4 right-4 z-[100] px-4 py-2 bg-gray-800 text-white font-mono text-xs rounded-lg hover:bg-gray-700 border border-gray-600 shadow-xl"
       >
-        {logMode ? 'Close Logs' : '🐞 Log Mode'}
+        {logMode ? 'Hide Debugger' : 'Show Input Debugger'}
       </button>
 
-      {/* Log Panel */}
+      {/* --- Input Debugger Panel --- */}
       {logMode && (
-        <div className="fixed right-4 top-16 bottom-4 w-80 bg-black/90 backdrop-blur-md z-[90] rounded-xl border border-gray-800 shadow-2xl overflow-hidden flex flex-col text-xs font-mono text-green-400">
-           <div className="p-3 bg-gray-900 border-b border-gray-800 flex justify-between items-center">
-             <span className="font-bold">Input Debugger</span>
-             <button onClick={() => setLogs([])} className="text-gray-500 hover:text-white">Clear</button>
+        <div className="fixed right-4 top-16 bottom-4 w-96 bg-[#1a1a1a] text-gray-200 z-[90] rounded-xl border border-gray-700 shadow-2xl overflow-hidden flex flex-col font-mono text-xs">
+           
+           {/* Header */}
+           <div className="p-4 bg-[#252525] border-b border-gray-700 flex justify-between items-center">
+             <div>
+               <h2 className="font-bold text-sm text-green-400">Input Debugger</h2>
+               <div className="text-[10px] text-gray-500">{deviceName}</div>
+             </div>
+             {!joyConService.isConnected && (
+               <button 
+                onClick={handleJoyConConnect} 
+                className="bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded text-[10px] font-bold"
+               >
+                 CONNECT
+               </button>
+             )}
+             <button onClick={() => setLogs([])} className="text-gray-500 hover:text-white ml-2">Clear</button>
            </div>
            
-           {/* Realtime Sensors */}
-           <div className="p-3 border-b border-gray-800 bg-black/50">
-             <div className="mb-2 font-bold text-gray-500 uppercase tracking-wider">Realtime Sensors</div>
-             {debugData ? (
-               <div className="grid grid-cols-2 gap-2 text-[10px]">
-                 <div>
-                    <div className="text-gray-500">ACCEL</div>
-                    <div>X: {debugData.accel.x.toFixed(2)}</div>
-                    <div>Y: {debugData.accel.y.toFixed(2)}</div>
-                    <div>Z: {debugData.accel.z.toFixed(2)}</div>
-                 </div>
-                 <div>
-                    <div className="text-gray-500">GYRO</div>
-                    <div>X: {debugData.gyro.x.toFixed(2)}</div>
-                    <div>Y: {debugData.gyro.y.toFixed(2)}</div>
-                    <div>Z: {debugData.gyro.z.toFixed(2)}</div>
-                 </div>
-                 <div className="col-span-2 mt-1 pt-1 border-t border-gray-800">
-                    <div className="text-gray-500">STICK</div>
-                    <div className="flex justify-between">
-                       <span>X: {debugData.stick.x.toFixed(2)}</span>
-                       <span>Y: {debugData.stick.y.toFixed(2)}</span>
-                    </div>
-                 </div>
+           {/* Visualization Area */}
+           <div className="p-4 border-b border-gray-700 bg-black/20 space-y-4 overflow-y-auto">
+             
+             {/* Analog Stick Visual */}
+             <div className="flex gap-4 items-center">
+                <div className="w-24 h-24 rounded-full border border-gray-600 bg-black relative shrink-0">
+                  {/* Crosshairs */}
+                  <div className="absolute top-1/2 left-0 w-full h-px bg-gray-800"></div>
+                  <div className="absolute left-1/2 top-0 h-full w-px bg-gray-800"></div>
+                  
+                  {/* Stick Dot */}
+                  {debugData && (
+                    <div 
+                      className="absolute w-4 h-4 bg-green-500 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)] transform -translate-x-1/2 -translate-y-1/2 transition-all duration-75"
+                      style={{ 
+                        left: `${50 + (debugData.stick.x * 40)}%`, 
+                        top: `${50 - (debugData.stick.y * 40)}%` 
+                      }}
+                    ></div>
+                  )}
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="text-[10px] uppercase text-gray-500 font-bold mb-1">Stick Values</div>
+                  <div className="flex justify-between border-b border-gray-800 pb-1">
+                    <span>X</span>
+                    <span className="text-green-400">{debugData?.stick.x.toFixed(3) || '0.000'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Y</span>
+                    <span className="text-green-400">{debugData?.stick.y.toFixed(3) || '0.000'}</span>
+                  </div>
+                </div>
+             </div>
+
+             {/* Buttons Grid */}
+             <div>
+               <div className="text-[10px] uppercase text-gray-500 font-bold mb-2">Buttons</div>
+               <div className="grid grid-cols-4 gap-2">
+                 {[
+                   ['A', debugData?.buttons.a], ['B', debugData?.buttons.b], 
+                   ['X', debugData?.buttons.x], ['Y', debugData?.buttons.y],
+                   ['L', debugData?.buttons.l], ['R', debugData?.buttons.r],
+                   ['ZL', debugData?.buttons.zl], ['ZR', debugData?.buttons.zr],
+                   ['+', debugData?.buttons.plus], ['-', debugData?.buttons.minus],
+                   ['H', debugData?.buttons.home], ['C', debugData?.buttons.capture]
+                 ].map(([label, active]) => (
+                   <div 
+                    key={label as string} 
+                    className={`h-8 flex items-center justify-center rounded border transition-colors ${
+                      active 
+                        ? 'bg-green-500 border-green-400 text-black font-bold shadow-[0_0_10px_rgba(34,197,94,0.5)]' 
+                        : 'bg-gray-800 border-gray-700 text-gray-500'
+                    }`}
+                   >
+                     {label as string}
+                   </div>
+                 ))}
                </div>
-             ) : (
-               <div className="text-gray-500 italic">No Device Data</div>
-             )}
+               {/* D-Pad */}
+               <div className="mt-2 grid grid-cols-3 gap-1 w-24 mx-auto">
+                  <div></div>
+                  <div className={`h-6 rounded flex items-center justify-center border ${debugData?.buttons.up ? 'bg-green-500 border-green-400 text-black' : 'bg-gray-800 border-gray-700'}`}>↑</div>
+                  <div></div>
+                  <div className={`h-6 rounded flex items-center justify-center border ${debugData?.buttons.left ? 'bg-green-500 border-green-400 text-black' : 'bg-gray-800 border-gray-700'}`}>←</div>
+                  <div className={`h-6 rounded flex items-center justify-center border ${debugData?.buttons.down ? 'bg-green-500 border-green-400 text-black' : 'bg-gray-800 border-gray-700'}`}>↓</div>
+                  <div className={`h-6 rounded flex items-center justify-center border ${debugData?.buttons.right ? 'bg-green-500 border-green-400 text-black' : 'bg-gray-800 border-gray-700'}`}>→</div>
+               </div>
+             </div>
+
+             {/* Sensors */}
+             <div>
+                <div className="text-[10px] uppercase text-gray-500 font-bold mb-1">Accelerometer (G)</div>
+                <div className="grid grid-cols-3 gap-2 text-[10px] mb-2">
+                   <div className="bg-gray-800 p-1 rounded text-center">X: {debugData?.accel.x.toFixed(2)}</div>
+                   <div className="bg-gray-800 p-1 rounded text-center">Y: {debugData?.accel.y.toFixed(2)}</div>
+                   <div className="bg-gray-800 p-1 rounded text-center">Z: {debugData?.accel.z.toFixed(2)}</div>
+                </div>
+                <div className="text-[10px] uppercase text-gray-500 font-bold mb-1">Gyroscope (rad/s)</div>
+                <div className="grid grid-cols-3 gap-2 text-[10px]">
+                   <div className="bg-gray-800 p-1 rounded text-center">X: {debugData?.gyro.x.toFixed(2)}</div>
+                   <div className="bg-gray-800 p-1 rounded text-center">Y: {debugData?.gyro.y.toFixed(2)}</div>
+                   <div className="bg-gray-800 p-1 rounded text-center">Z: {debugData?.gyro.z.toFixed(2)}</div>
+                </div>
+             </div>
            </div>
 
-           {/* Event Log */}
-           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-             <div className="font-bold text-gray-500 uppercase tracking-wider mb-2">Event Log</div>
-             {logs.length === 0 && <div className="text-gray-600 italic">Waiting for input...</div>}
+           {/* Scrolling Log */}
+           <div className="flex-1 overflow-y-auto p-2 space-y-1 bg-black text-[10px]">
+             {logs.length === 0 && <div className="text-gray-600 italic p-2">Waiting for input events...</div>}
              {logs.map((log) => (
-               <div key={log.id} className="flex gap-2 animate-fade-in">
+               <div key={log.id} className="flex gap-2 font-mono">
                  <span className="text-gray-500 select-none">[{log.time}]</span>
-                 <span className={log.message.includes('Pressed') ? 'text-white font-bold' : 'text-gray-400'}>
+                 <span className={log.message.includes('Pressed') ? 'text-green-400' : 'text-gray-300'}>
                    {log.message}
                  </span>
                </div>
@@ -509,27 +560,6 @@ const App: React.FC = () => {
 
             </div>
           </div>
-        </div>
-      )}
-
-      {/* --- Debug Overlay (Footer) --- */}
-      {debugData && !logMode && (
-        <div className="fixed bottom-0 left-0 w-full bg-black/80 text-gray-400 text-[10px] font-mono p-1 z-[100] pointer-events-none opacity-60">
-           <div className="flex justify-between max-w-6xl mx-auto px-4">
-             <span>ACC: X:{debugData.accel.x.toFixed(1)} Y:{debugData.accel.y.toFixed(1)} Z:{debugData.accel.z.toFixed(1)}</span>
-             <span className="mx-2 text-gray-600">|</span>
-             <span>GYRO: X:{debugData.gyro.x.toFixed(1)} Y:{debugData.gyro.y.toFixed(1)} Z:{debugData.gyro.z.toFixed(1)}</span>
-             <span className="mx-2 text-gray-600">|</span>
-             <span>
-               BTN: 
-               {debugData.buttons.zr ? <span className="text-red-400 font-bold"> ZR</span> : <span className="opacity-30"> ZR</span>}
-               {debugData.buttons.zl ? <span className="text-red-400 font-bold"> ZL</span> : <span className="opacity-30"> ZL</span>}
-               {debugData.buttons.a ? ' A' : ''}
-               {debugData.buttons.b ? ' B' : ''}
-               {debugData.buttons.x ? ' X' : ''}
-               {debugData.buttons.y ? ' Y' : ''}
-             </span>
-           </div>
         </div>
       )}
     </div>
