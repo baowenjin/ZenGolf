@@ -61,7 +61,13 @@ export interface JoyConData {
     left: boolean;
     right: boolean;
     stick: boolean; // Stick click
+    rStickClick: boolean;
+    lStickClick: boolean;
+    sl: boolean;
+    sr: boolean;
+    [key: string]: boolean; // Index signature for logging iteration
   };
+  rawHex?: string;
 }
 
 export type InputMode = 'MOUSE' | 'JOYCON';

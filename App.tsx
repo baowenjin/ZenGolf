@@ -111,8 +111,11 @@ const App: React.FC = () => {
       const prev = prevButtonsRef.current;
       const curr = data.buttons;
       
-      const btnKeys = Object.keys(curr) as Array<keyof typeof curr>;
+      const btnKeys = Object.keys(curr);
       btnKeys.forEach(key => {
+        // Skip index signature or non-boolean props if any
+        if (typeof curr[key] !== 'boolean') return;
+        
         if (curr[key] && !prev[key]) addLog(`${key.toUpperCase()} Pressed`);
         if (!curr[key] && prev[key]) addLog(`${key.toUpperCase()} Released`);
       });
@@ -313,6 +316,12 @@ const App: React.FC = () => {
            {/* Visualization Area */}
            <div className="p-4 border-b border-gray-700 bg-black/20 space-y-4 overflow-y-auto">
              
+             {/* Raw Hex Data */}
+             <div className="bg-black p-2 rounded border border-gray-800 font-mono text-[10px] text-yellow-400 break-words">
+                <div className="text-gray-500 mb-1 font-bold">RAW REPORT (Hex):</div>
+                {debugData?.rawHex || "No Data"}
+             </div>
+
              {/* Analog Stick Visual */}
              <div className="flex gap-4 items-center">
                 <div className="w-24 h-24 rounded-full border border-gray-600 bg-black relative shrink-0">
