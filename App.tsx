@@ -20,6 +20,9 @@ const App: React.FC = () => {
   const [shotResult, setShotResult] = useState<ShotResult | null>(null);
   const [commentary, setCommentary] = useState<string>("");
   const [swingData, setSwingData] = useState<{ time: number; power: number }[]>([]);
+  
+  // Debug State
+  const [debugData, setDebugData] = useState<JoyConData | null>(null);
 
   // --- Refs ---
   const ballVel = useRef<Vector3>({ x: 0, y: 0, z: 0 });
@@ -79,6 +82,9 @@ const App: React.FC = () => {
 
   // --- Core Input Loop ---
   const processJoyConData = (data: JoyConData) => {
+    // 0. Update Debug Data (Always runs for telemetry)
+    setDebugData(data);
+
     // 1. Global Reset (Check this FIRST to avoid TS unreachable code errors and allow resetting from Result)
     const holdingReset = data.buttons.b || data.buttons.y;
     if (holdingReset && gameState === GameState.RESULT) {
@@ -393,6 +399,27 @@ const App: React.FC = () => {
 
             </div>
           </div>
+        </div>
+      )}
+
+      {/* --- Debug Overlay --- */}
+      {debugData && (
+        <div className="fixed bottom-0 left-0 w-full bg-black/80 text-gray-400 text-[10px] font-mono p-1 z-[100] pointer-events-none opacity-60">
+           <div className="flex justify-between max-w-6xl mx-auto px-4">
+             <span>ACC: X:{debugData.accel.x.toFixed(1)} Y:{debugData.accel.y.toFixed(1)} Z:{debugData.accel.z.toFixed(1)}</span>
+             <span className="mx-2 text-gray-600">|</span>
+             <span>GYRO: X:{debugData.gyro.x.toFixed(1)} Y:{debugData.gyro.y.toFixed(1)} Z:{debugData.gyro.z.toFixed(1)}</span>
+             <span className="mx-2 text-gray-600">|</span>
+             <span>
+               BTN: 
+               {debugData.buttons.zr ? <span className="text-red-400 font-bold"> ZR</span> : <span className="opacity-30"> ZR</span>}
+               {debugData.buttons.zl ? <span className="text-red-400 font-bold"> ZL</span> : <span className="opacity-30"> ZL</span>}
+               {debugData.buttons.a ? ' A' : ''}
+               {debugData.buttons.b ? ' B' : ''}
+               {debugData.buttons.x ? ' X' : ''}
+               {debugData.buttons.y ? ' Y' : ''}
+             </span>
+           </div>
         </div>
       )}
     </div>
