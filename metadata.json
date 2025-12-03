@@ -1,0 +1,5 @@
+{
+  "name": "ZeroGOLF Web",
+  "description": "A zero-installation web-based motion sensing golf game using Joy-Con controllers via WebHID.",
+  "requestFramePermissions": []
+}
