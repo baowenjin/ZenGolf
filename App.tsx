@@ -29,39 +29,69 @@ const App: React.FC = () => {
   const animationFrameRef = useRef<number>(0);
 
   // --- Logic ---
-  const resetGame = () => {
+  const resetGame = useCallback(() => {
     setBallPos({ x: 0, y: 0, z: 0 });
     setGameState(GameState.IDLE);
     setShotResult(null);
     setCommentary("");
     ballVel.current = { x: 0, y: 0, z: 0 };
-  };
+  }, []);
 
-  const handleJoyConConnect = async () => {
-    const success = await joyConService.connect();
-    if (success) {
-      setInputMode('JOYCON');
-      setGameState(GameState.IDLE);
-      joyConService.subscribe(processJoyConData);
+  const executeShot = useCallback((power: number) => {
+    setGameState(GameState.BALL_FLYING);
+    setIsAddressMode(false);
+    
+    const club = CLUBS[currentClubIndex];
+    
+    // Physics Init
+    const speed = club.maxDist * 0.25 * power; // Base speed tuning
+    const loftRad = club.loft; // Angle up
+    
+    // Random deviation based on difficulty and power (harder to hit straight at full power)
+    const accuracyNoise = (Math.random() - 0.5) * 0.1 * (power * club.difficulty); 
+
+    ballVel.current = {
+      x: Math.sin(accuracyNoise) * speed, // Left/Right
+      y: Math.sin(loftRad) * speed * 1.5, // Up (Y is Up)
+      z: Math.cos(loftRad) * speed * Math.cos(accuracyNoise) // Forward
+    };
+
+    setShotResult(null);
+  }, [currentClubIndex]);
+
+  const finishSwing = useCallback((wasHoldingTrigger: boolean) => {
+    isSwinging.current = false;
+    
+    // Normalize power 0.0 - 1.0 (clamped slightly above 1.0 for "Nice Shot" feel)
+    const powerRatio = Math.min(swingPeakPower.current / MAX_POWER_GYRO, 1.1);
+
+    if (wasHoldingTrigger && powerRatio > 0.1) {
+       // EXECUTE REAL SHOT
+       executeShot(powerRatio);
     } else {
-      alert("Could not connect to Joy-Con. Ensure it is paired via Bluetooth.");
+       // JUST PRACTICE
+       // Reset state to IDLE if we were swinging but didn't commit
+       if (gameState === GameState.SWINGING) {
+         setGameState(GameState.ADDRESS); // Go back to address
+       }
     }
-  };
+  }, [gameState, executeShot]);
 
   // --- Core Input Loop ---
   const processJoyConData = (data: JoyConData) => {
-    // Only process input if we are in a playable state
-    if (gameState !== GameState.IDLE && gameState !== GameState.ADDRESS && gameState !== GameState.SWINGING) return;
-
-    // 1. Button State (Address Mode)
-    // Nintendo Sports Golf: Hold ZR/ZL to address the ball.
-    const holdingTrigger = data.buttons.zr || data.buttons.zl;
+    // 1. Global Reset (Check this FIRST to avoid TS unreachable code errors and allow resetting from Result)
     const holdingReset = data.buttons.b || data.buttons.y;
-
     if (holdingReset && gameState === GameState.RESULT) {
        resetGame();
        return;
     }
+
+    // 2. Playable State Filter
+    if (gameState !== GameState.IDLE && gameState !== GameState.ADDRESS && gameState !== GameState.SWINGING) return;
+
+    // 3. Button State (Address Mode)
+    // Nintendo Sports Golf: Hold ZR/ZL to address the ball.
+    const holdingTrigger = data.buttons.zr || data.buttons.zl;
 
     // Update Address Mode UI
     if (gameState === GameState.IDLE || gameState === GameState.ADDRESS) {
@@ -74,7 +104,7 @@ const App: React.FC = () => {
       }
     }
 
-    // 2. Swing Detection
+    // 4. Swing Detection
     // Calculate magnitude of angular velocity (Gyro)
     const gyroMag = Math.sqrt(data.gyro.x * data.gyro.x + data.gyro.y * data.gyro.y + data.gyro.z * data.gyro.z);
     
@@ -110,45 +140,27 @@ const App: React.FC = () => {
     }
   };
 
-  const finishSwing = (wasHoldingTrigger: boolean) => {
-    isSwinging.current = false;
-    
-    // Normalize power 0.0 - 1.0 (clamped slightly above 1.0 for "Nice Shot" feel)
-    const powerRatio = Math.min(swingPeakPower.current / MAX_POWER_GYRO, 1.1);
+  // --- Subscription Management ---
+  // Ensure the subscription uses the latest state closure
+  useEffect(() => {
+    if (inputMode === 'JOYCON') {
+      joyConService.subscribe(processJoyConData);
+    }
+    // No cleanup needed for subscription replacement as it just overwrites callback
+  }, [inputMode, gameState, isAddressMode, currentClubIndex, resetGame, executeShot, finishSwing]);
 
-    if (wasHoldingTrigger && powerRatio > 0.1) {
-       // EXECUTE REAL SHOT
-       executeShot(powerRatio);
+
+  const handleJoyConConnect = async () => {
+    const success = await joyConService.connect();
+    if (success) {
+      setInputMode('JOYCON');
+      setGameState(GameState.IDLE);
+      // Subscription is handled by the useEffect above
     } else {
-       // JUST PRACTICE
-       // Reset state to IDLE if we were swinging but didn't commit
-       if (gameState === GameState.SWINGING) {
-         setGameState(GameState.ADDRESS); // Go back to address
-       }
+      alert("Could not connect to Joy-Con. Ensure it is paired via Bluetooth.");
     }
   };
 
-  const executeShot = (power: number) => {
-    setGameState(GameState.BALL_FLYING);
-    setIsAddressMode(false);
-    
-    const club = CLUBS[currentClubIndex];
-    
-    // Physics Init
-    const speed = club.maxDist * 0.25 * power; // Base speed tuning
-    const loftRad = club.loft; // Angle up
-    
-    // Random deviation based on difficulty and power (harder to hit straight at full power)
-    const accuracyNoise = (Math.random() - 0.5) * 0.1 * (power * club.difficulty); 
-
-    ballVel.current = {
-      x: Math.sin(accuracyNoise) * speed, // Left/Right
-      y: Math.sin(loftRad) * speed * 1.5, // Up (Y is Up)
-      z: Math.cos(loftRad) * speed * Math.cos(accuracyNoise) // Forward
-    };
-
-    setShotResult(null);
-  };
 
   // --- Physics Loop ---
   const updatePhysics = useCallback(() => {
@@ -194,11 +206,6 @@ const App: React.FC = () => {
     animationFrameRef.current = requestAnimationFrame(updatePhysics);
   }, [gameState, ballPos]);
 
-  useEffect(() => {
-    animationFrameRef.current = requestAnimationFrame(updatePhysics);
-    return () => cancelAnimationFrame(animationFrameRef.current);
-  }, [updatePhysics]);
-
   const endShot = () => {
     setGameState(GameState.RESULT);
     
@@ -226,6 +233,11 @@ const App: React.FC = () => {
     setCommentary("Reading the green...");
     getCaddieCommentary(result).then(setCommentary);
   };
+
+  useEffect(() => {
+    animationFrameRef.current = requestAnimationFrame(updatePhysics);
+    return () => cancelAnimationFrame(animationFrameRef.current);
+  }, [updatePhysics]);
 
   // --- Render ---
 
@@ -367,12 +379,7 @@ const App: React.FC = () => {
                           resetGame();
                         } else {
                           // For MVP, we just reset to Tee to practice again
-                          // In full game, move pos to ballPos
                           setGameState(GameState.IDLE);
-                          // Keep ball pos for next shot? 
-                          // For "Driving Range" feel, reset.
-                          // For "Course" feel, keep.
-                          // Let's reset for the endless driving range loop vibe requested.
                           resetGame();
                         }
                       }}
