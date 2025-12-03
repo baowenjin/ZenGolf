@@ -42,6 +42,7 @@ export interface ShotResult {
 export interface JoyConData {
   accel: { x: number; y: number; z: number };
   gyro: { x: number; y: number; z: number };
+  stick: { x: number; y: number };
   buttons: {
     zr: boolean;
     zl: boolean;

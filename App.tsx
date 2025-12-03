@@ -6,6 +6,13 @@ import { HOLE_DISTANCE, CLUBS, MAX_POWER_GYRO, SWING_TRIGGER_THRESHOLD, GRAVITY,
 import GameCanvas from './components/GameCanvas';
 import ShotAnalysis from './components/ShotAnalysis';
 
+interface LogEntry {
+  id: number;
+  time: string;
+  message: string;
+  type: 'button' | 'sensor';
+}
+
 const App: React.FC = () => {
   // --- State ---
   const [gameState, setGameState] = useState<GameState>(GameState.INTRO);
@@ -21,17 +28,31 @@ const App: React.FC = () => {
   const [commentary, setCommentary] = useState<string>("");
   const [swingData, setSwingData] = useState<{ time: number; power: number }[]>([]);
   
-  // Debug State
+  // Debug & Logging State
   const [debugData, setDebugData] = useState<JoyConData | null>(null);
-
+  const [logMode, setLogMode] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  
   // --- Refs ---
   const ballVel = useRef<Vector3>({ x: 0, y: 0, z: 0 });
   const swingPeakPower = useRef(0);
   const isSwinging = useRef(false);
   const swingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animationFrameRef = useRef<number>(0);
+  const prevButtonsRef = useRef<JoyConData['buttons'] | null>(null);
+  const logIdCounter = useRef(0);
 
   // --- Logic ---
+  const addLog = (message: string, type: 'button' | 'sensor' = 'button') => {
+    const now = new Date();
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
+    
+    setLogs(prev => {
+       const newLog = { id: logIdCounter.current++, time: timeStr, message, type };
+       return [newLog, ...prev].slice(0, 100); // Keep last 100 logs
+    });
+  };
+
   const resetGame = useCallback(() => {
     setBallPos({ x: 0, y: 0, z: 0 });
     setGameState(GameState.IDLE);
@@ -84,6 +105,33 @@ const App: React.FC = () => {
   const processJoyConData = (data: JoyConData) => {
     // 0. Update Debug Data (Always runs for telemetry)
     setDebugData(data);
+
+    // --- Logging Logic ---
+    if (prevButtonsRef.current) {
+      const prev = prevButtonsRef.current;
+      const curr = data.buttons;
+      
+      const checkBtn = (key: keyof JoyConData['buttons'], name: string) => {
+        if (curr[key] && !prev[key]) addLog(`${name} Pressed`);
+        if (!curr[key] && prev[key]) addLog(`${name} Released`);
+      };
+
+      checkBtn('a', 'Button A');
+      checkBtn('b', 'Button B');
+      checkBtn('x', 'Button X');
+      checkBtn('y', 'Button Y');
+      checkBtn('l', 'L');
+      checkBtn('r', 'R');
+      checkBtn('zl', 'ZL');
+      checkBtn('zr', 'ZR');
+    }
+    prevButtonsRef.current = data.buttons;
+
+    // Log large movements (stick)
+    if (Math.abs(data.stick.x) > 0.9 || Math.abs(data.stick.y) > 0.9) {
+      // Throttle stick logs? For now let's just show values in the panel
+    }
+    // ---------------------
 
     // 1. Global Reset (Check this FIRST to avoid TS unreachable code errors and allow resetting from Result)
     const holdingReset = data.buttons.b || data.buttons.y;
@@ -250,6 +298,68 @@ const App: React.FC = () => {
   return (
     <div className="h-screen w-full bg-neutral-900 flex flex-col items-center justify-center font-sans overflow-hidden select-none">
       
+      {/* Log Mode Toggle */}
+      <button 
+        onClick={() => setLogMode(!logMode)}
+        className="fixed top-4 right-4 z-[100] px-3 py-1 bg-gray-800/80 text-white text-xs rounded hover:bg-gray-700 transition-colors border border-gray-600"
+      >
+        {logMode ? 'Close Logs' : '🐞 Log Mode'}
+      </button>
+
+      {/* Log Panel */}
+      {logMode && (
+        <div className="fixed right-4 top-16 bottom-4 w-80 bg-black/90 backdrop-blur-md z-[90] rounded-xl border border-gray-800 shadow-2xl overflow-hidden flex flex-col text-xs font-mono text-green-400">
+           <div className="p-3 bg-gray-900 border-b border-gray-800 flex justify-between items-center">
+             <span className="font-bold">Input Debugger</span>
+             <button onClick={() => setLogs([])} className="text-gray-500 hover:text-white">Clear</button>
+           </div>
+           
+           {/* Realtime Sensors */}
+           <div className="p-3 border-b border-gray-800 bg-black/50">
+             <div className="mb-2 font-bold text-gray-500 uppercase tracking-wider">Realtime Sensors</div>
+             {debugData ? (
+               <div className="grid grid-cols-2 gap-2 text-[10px]">
+                 <div>
+                    <div className="text-gray-500">ACCEL</div>
+                    <div>X: {debugData.accel.x.toFixed(2)}</div>
+                    <div>Y: {debugData.accel.y.toFixed(2)}</div>
+                    <div>Z: {debugData.accel.z.toFixed(2)}</div>
+                 </div>
+                 <div>
+                    <div className="text-gray-500">GYRO</div>
+                    <div>X: {debugData.gyro.x.toFixed(2)}</div>
+                    <div>Y: {debugData.gyro.y.toFixed(2)}</div>
+                    <div>Z: {debugData.gyro.z.toFixed(2)}</div>
+                 </div>
+                 <div className="col-span-2 mt-1 pt-1 border-t border-gray-800">
+                    <div className="text-gray-500">STICK</div>
+                    <div className="flex justify-between">
+                       <span>X: {debugData.stick.x.toFixed(2)}</span>
+                       <span>Y: {debugData.stick.y.toFixed(2)}</span>
+                    </div>
+                 </div>
+               </div>
+             ) : (
+               <div className="text-gray-500 italic">No Device Data</div>
+             )}
+           </div>
+
+           {/* Event Log */}
+           <div className="flex-1 overflow-y-auto p-2 space-y-1">
+             <div className="font-bold text-gray-500 uppercase tracking-wider mb-2">Event Log</div>
+             {logs.length === 0 && <div className="text-gray-600 italic">Waiting for input...</div>}
+             {logs.map((log) => (
+               <div key={log.id} className="flex gap-2 animate-fade-in">
+                 <span className="text-gray-500 select-none">[{log.time}]</span>
+                 <span className={log.message.includes('Pressed') ? 'text-white font-bold' : 'text-gray-400'}>
+                   {log.message}
+                 </span>
+               </div>
+             ))}
+           </div>
+        </div>
+      )}
+
       {/* --- Intro Screen --- */}
       {gameState === GameState.INTRO && (
         <div className="absolute inset-0 z-50 bg-gradient-to-br from-green-600 to-teal-800 flex flex-col items-center justify-center text-white p-6">
@@ -402,8 +512,8 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* --- Debug Overlay --- */}
-      {debugData && (
+      {/* --- Debug Overlay (Footer) --- */}
+      {debugData && !logMode && (
         <div className="fixed bottom-0 left-0 w-full bg-black/80 text-gray-400 text-[10px] font-mono p-1 z-[100] pointer-events-none opacity-60">
            <div className="flex justify-between max-w-6xl mx-auto px-4">
              <span>ACC: X:{debugData.accel.x.toFixed(1)} Y:{debugData.accel.y.toFixed(1)} Z:{debugData.accel.z.toFixed(1)}</span>

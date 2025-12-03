@@ -8,6 +8,8 @@ interface HIDDevice extends EventTarget {
   sendFeatureReport(reportId: number, data: BufferSource): Promise<void>;
   receiveFeatureReport(reportId: number): Promise<DataView>;
   addEventListener(type: string, listener: (event: any) => void): void;
+  productId: number;
+  vendorId: number;
 }
 
 // Extend Navigator to include HID
@@ -105,9 +107,6 @@ export class JoyConService {
     // Byte 1-12: Button status etc.
     // Byte 13-48: IMU Data (3 frames of 12 bytes each: AccelX, Y, Z, GyroX, Y, Z)
 
-    // Simplified: Just read the first frame of IMU data for responsiveness
-    // In a real pro app we would fuse all 3 frames.
-
     const reportId = data.getUint8(0);
     if (reportId !== 0x30) return;
 
@@ -119,7 +118,7 @@ export class JoyConService {
     const gyroY = data.getInt16(21, true) * 0.061;
     const gyroZ = data.getInt16(23, true) * 0.061;
 
-    // Buttons (simplified map)
+    // Buttons
     const byte1 = data.getUint8(1);
     const byte2 = data.getUint8(2);
     const byte3 = data.getUint8(3);
@@ -131,14 +130,48 @@ export class JoyConService {
       a: !!(byte1 & 0x08),
       r: !!(byte3 & 0x40),
       zr: !!(byte3 & 0x80),
-      l: !!(byte3 & 0x40), // Shared bit location depends on L/R controller, simplified here
+      l: !!(byte3 & 0x40), 
       zl: !!(byte3 & 0x80),
     };
+
+    // Analog Sticks (12-bit parsing)
+    // Left Stick: Bytes 6, 7, 8
+    // Right Stick: Bytes 9, 10, 11
+    let stickX = 0;
+    let stickY = 0;
+
+    const productId = this.device?.productId;
+
+    if (productId === 0x2006) {
+      // Joy-Con (L)
+      const b0 = data.getUint8(6);
+      const b1 = data.getUint8(7);
+      const b2 = data.getUint8(8);
+      
+      const rawX = b0 | ((b1 & 0xF) << 8);
+      const rawY = ((b1 & 0xF0) >> 4) | (b2 << 4);
+      
+      // Normalize approx 0-4095 to -1.0 to 1.0
+      stickX = (rawX - 2048) / 2048;
+      stickY = (rawY - 2048) / 2048;
+    } else if (productId === 0x2007) {
+      // Joy-Con (R)
+      const b0 = data.getUint8(9);
+      const b1 = data.getUint8(10);
+      const b2 = data.getUint8(11);
+      
+      const rawX = b0 | ((b1 & 0xF) << 8);
+      const rawY = ((b1 & 0xF0) >> 4) | (b2 << 4);
+
+      stickX = (rawX - 2048) / 2048;
+      stickY = (rawY - 2048) / 2048;
+    }
 
     if (this.onDataCallback) {
       this.onDataCallback({
         accel: { x: accelX, y: accelY, z: accelZ },
         gyro: { x: gyroX, y: gyroY, z: gyroZ },
+        stick: { x: stickX, y: stickY },
         buttons
       });
     }
